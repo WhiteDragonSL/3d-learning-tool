@@ -336,7 +336,7 @@ function makeMaterial(color, kind) {
 // Sharp-edge lines for the CAD look. Unlike THREE.EdgesGeometry this welds
 // vertices by position and ignores edges with only one neighbouring face, so
 // the T-junctions left by boolean operations don't show as stray lines.
-function featureEdges(geo, angleDeg = 28) {
+export function featureEdges(geo, angleDeg = 28) {
   const pos = geo.attributes.position;
   const index = geo.index;
   const triCount = index ? index.count / 3 : pos.count / 3;

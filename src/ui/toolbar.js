@@ -74,8 +74,29 @@ export function showMenu(anchor, ids, C) {
 export function buildToolbar(app, C) {
   const ribbon = document.getElementById('ribbon');
 
+  // workspace switcher (the ▾ button at the far left of the tabs row)
+  const workspaceMenu = (e) => {
+    showMenu(e.currentTarget, ['ws-design', 'ws-boxgen', '-', 'home', 'tutorials'], C);
+    for (const b of openMenu.querySelectorAll('[data-tool^=ws-]')) {
+      if (b.dataset.tool === 'ws-' + app.workspace) b.insertAdjacentHTML('beforeend', '<b class="dd-check">✓</b>');
+    }
+    openMenu.insertAdjacentHTML('afterbegin', '<div class="dd-title">Switch workspace</div>');
+  };
+
   const render = () => {
     closeMenus();
+    if (app.workspace === 'boxgen') {
+      // IoT BoxGen keeps its controls in the side panels and the viewport bar
+      ribbon.innerHTML = `
+        <div class="tb-tabs">
+          <button class="ws-btn" data-menu-btn title="Workspace">IOT BOXGEN ▾</button>
+          <button class="tb-tab active">ENCLOSURE</button>
+          <span class="tb-note">${icon('boxgen')} Parametric 3D-printable enclosures for electronics</span>
+        </div>`;
+      ribbon.querySelector('.ws-btn').onclick = workspaceMenu;
+      bus.emit('toolbar:rendered');
+      return;
+    }
     const sketching = app.sketch.active;
     const groups = sketching ? SKETCH_GROUPS : SOLID_GROUPS;
     ribbon.innerHTML = `
@@ -111,16 +132,14 @@ export function buildToolbar(app, C) {
       fin.querySelector('button').onclick = () => C['finish-sketch'].run();
       row.appendChild(fin);
     }
-    ribbon.querySelector('.ws-btn').onclick = (e) => {
-      showMenu(e.currentTarget, ['home', 'tutorials'], C);
-      openMenu.insertAdjacentHTML('afterbegin', '<div class="dd-title">Workspace: <b>DESIGN</b> ✓</div><div class="dd-sep"></div>');
-    };
+    ribbon.querySelector('.ws-btn').onclick = workspaceMenu;
     ribbon.querySelector('.tb-tab[data-tab=SOLID]').onclick = () => { if (app.sketch.active) app.finishSketch(); };
     refresh();
     bus.emit('toolbar:rendered');
   };
 
   const refresh = () => {
+    if (app.workspace === 'boxgen') return;
     for (const b of ribbon.querySelectorAll('.tool')) {
       const t = b.dataset.tool;
       const active = (t === 'translate' && app.transformMode) || t === app.sketch.mode || (t === 'measure' && app.measure.active)
@@ -130,6 +149,7 @@ export function buildToolbar(app, C) {
   };
 
   let wasSketching = false;
+  bus.on('workspace', render);
   bus.on('tool:changed', () => {
     if (app.sketch.active !== wasSketching) { wasSketching = app.sketch.active; render(); }
     else refresh();
@@ -174,19 +194,25 @@ export function buildAppBar(app, C, ui) {
   document.querySelector('.brand').onclick = () => ui.home();
 
   const title = document.getElementById('doc-title');
-  const setTitle = () => { title.textContent = app.doc.name; document.title = `${app.doc.name} - MiniCAD Learn`; };
+  const docName = () => (app.workspace === 'boxgen' ? app.boxgen.state.name : app.doc.name);
+  const setTitle = () => { title.textContent = docName(); document.title = `${docName()} - MiniCAD Learn`; };
   title.parentElement.ondblclick = () => {
-    const v = prompt('Design name:', app.doc.name);
-    if (v !== null) { app.renameDocument(v); toast('Design renamed.', 'ok'); }
+    const boxgen = app.workspace === 'boxgen';
+    const v = prompt(boxgen ? 'Enclosure name:' : 'Design name:', docName());
+    if (v === null) return;
+    if (boxgen) app.boxgen.rename(v); else app.renameDocument(v);
+    toast(boxgen ? 'Enclosure renamed.' : 'Design renamed.', 'ok');
   };
   bus.on('doc:renamed', setTitle);
   bus.on('doc:changed', setTitle);
+  bus.on('boxgen:changed', setTitle);
   setTitle();
 
   const updateUndo = () => {
-    left.querySelector('[data-tool=undo]').disabled = app.doc.index <= 0;
-    left.querySelector('[data-tool=redo]').disabled = app.doc.index >= app.doc.history.length - 1;
+    const boxgen = app.workspace === 'boxgen';
+    left.querySelector('[data-tool=undo]').disabled = boxgen ? !app.boxgen.canUndo : app.doc.index <= 0;
+    left.querySelector('[data-tool=redo]').disabled = boxgen ? !app.boxgen.canRedo : app.doc.index >= app.doc.history.length - 1;
   };
-  bus.on('doc:changed', updateUndo);
+  for (const ev of ['doc:changed', 'boxgen:changed', 'workspace']) bus.on(ev, updateUndo);
   updateUndo();
 }

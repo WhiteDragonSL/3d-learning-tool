@@ -38,9 +38,22 @@ The toolbar icons are kept to a short beginner set; every other command is in th
 - **Inspect:** Measure (with corner snapping), **Interference** (precise BVH check: touching is allowed), **Section Analysis**, **Zebra**, **Draft** and **Curvature Map** analysis, **Centre of Mass** (with mass, volume and area); size, volume and mass in Properties.
 - **Insert Mesh** (STL), Export STL, Save/Open `.minicad.json`, automatic session restore.
 
+## IoT BoxGen workspace
+
+A second workspace (switch with the **DESIGN ▾ / IOT BOXGEN ▾** button, or pick **IoT Enclosure** on the start screen) that generates 3D-printable enclosures for electronics projects.
+
+- **Component library:** ESP32 DevKit V1, Arduino Uno R3, IR obstacle sensor, HC-SR04 ultrasonic sensor, SG90 servo, 18650 holder, 9V battery, plus your own **custom components** (size, mounting, one port). Search box at the top.
+- **Placement:** drag components on the enclosure floor, `R` / `Shift+R` rotates 90°, arrow keys nudge (Shift = 10 mm), `Del` deletes, `Ctrl+D` duplicates, `Ctrl+Z` / `Ctrl+Y` undo / redo. The inspector edits X / Y (height) / Z exactly. Ports snap flush to a wall when dragged close; **Snap to wall** does it for you.
+- **Enclosure:** **Auto-Fit** (smallest box + padding), **Arrange** (packs the parts in rows, then fits), inner size, wall thickness, corner radius, lid lip tolerance, standoff height, cutout clearance, ventilation slots, screw or friction lid.
+- **Generated geometry:** shell with rounded corners, PCB standoffs with pilot holes, floor screw holes, corner screw pillars, port and sensor cutouts in the walls (or the lid, for top openings), vent slots, and a lid with an inset lip and countersunk screw holes. Booleans run in a Web Worker so the page stays responsive.
+- **Views:** Assembled, Exploded, Base only, Lid only, plus Components / X-Ray / Wireframe / Labels toggles. Live checks flag parts that stick out, overlap, hit a pillar or are too tall, and ports that don't reach a wall.
+- **Export:** Base and Lid as binary **STL**, laid flat (Z up) and ready to slice; or **Edit in Design workspace** to keep modelling them with the Fusion tools.
+
+Board dimensions, hole patterns and port positions are taken from published drawings and rounded; check them against your own parts before printing.
+
 ## Learning
 
-A start screen offers **Tutorials**, **Sketch** or **3D Objects**. There are 11 guided lessons and 2 challenges. Each step is checked automatically as you work, with hints, highlighted tools (including tools inside ▾ menus), points and saved progress.
+A start screen asks whether to resume your last design or start something new, then offers **Tutorials**, **Sketch**, **3D Objects** or **IoT Enclosure**. There are 11 guided lessons and 2 challenges. Each step is checked automatically as you work, with hints, highlighted tools (including tools inside ▾ menus), points and saved progress.
 
 ## Code layout
 
@@ -50,6 +63,7 @@ A start screen offers **Tutorials**, **Sketch** or **3D Objects**. There are 11 
 - `src/ops.js`: boolean operations (three-bvh-csg), shell, split, patterns, mirror, precise interference (three-mesh-bvh)
 - `src/geometry.js`: pure geometry: profile outlines (fillets, splines, offsets), sweep/loft/lathe/coil generators, chamfered box, mass properties, curvature
 - `src/features.js`: the extra Fusion commands (Loft, Sweep, Pipe, Rib, Hole, Thread, Draft, Offset Face, Split, Align, construction geometry, analyses, sketch modify tools)
+- `src/boxgen/`: IoT BoxGen workspace: `library.js` (component data), `enclosure.js` (parametric base/lid geometry), `worker.js` (builds it off the main thread), `boxgen.js` (scene, panels, placement, export)
 - `src/tools/`: sketch tool, measure tool, extrude drag arrow
 - `src/ui/`: toolbar/app bar, browser, properties, timeline, overlays (nav bar, sketch palette, marking menu, search, help), dialogs, start screen
 - `src/tutorials.js`: lesson content and the tutorial engine

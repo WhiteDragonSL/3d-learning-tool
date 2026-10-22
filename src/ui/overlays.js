@@ -2,6 +2,7 @@ import { icon } from '../icons.js';
 import { bus } from '../events.js';
 import { shortcutOf } from '../commands.js';
 import { showMenu, closeMenus } from './toolbar.js';
+import { toast } from './dialog.js';
 
 // ---------------------------------------------------------------------------
 // Navigation bar (bottom centre of the viewport), like Fusion's.
@@ -93,7 +94,7 @@ export function buildMarkingMenu(app, C) {
   document.addEventListener('pointerdown', (e) => { if (menu && !menu.contains(e.target)) close(); }, true);
 
   function open(e) {
-    if (app.sketch.picking) return;
+    if (app.sketch.picking || app.workspace !== 'design') return;
     closeMenus();
     let context = [];
     if (app.sketch.active) {
@@ -165,6 +166,7 @@ export function buildMarkingMenu(app, C) {
 // ---------------------------------------------------------------------------
 export function openSearch(app, C) {
   document.querySelector('.search-pop')?.remove();
+  if (app.workspace !== 'design') { toast('Command search is for the Design workspace. Switch with the workspace button (top left).', 'warn', 3500); return; }
   const pop = document.createElement('div');
   pop.className = 'search-pop';
   pop.innerHTML = `<div class="sp-input">${icon('search')}<input placeholder="Search commands… (e.g. extrude, fillet, plane)" /></div><div class="sp-list"></div>`;

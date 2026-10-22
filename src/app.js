@@ -9,6 +9,7 @@ import {
 } from './model.js';
 import { combine, mirrorBody, cloneBody, rotatedClone, shellBody, SHELLABLE, meshBodyFromGeometry, findOverlaps, worldGeometry } from './ops.js';
 import { SketchTool } from './tools/sketch.js';
+import { BoxGen } from './boxgen/boxgen.js';
 import { MeasureTool } from './tools/measure.js';
 import { ArrowManipulator } from './tools/manipulator.js';
 import { openDialog, closeDialog, dialogOpen, toast, round } from './ui/dialog.js';
@@ -40,6 +41,9 @@ export class App {
     this.measure = new MeasureTool(this);
     this.arrow = new ArrowManipulator(this);
     this.viewCube = new ViewCube(document.getElementById('viewcube'), this.vp, () => this.vp.setView('home'), () => this.fitAll());
+
+    this.workspace = 'design';
+    this.boxgen = new BoxGen(this);
 
     this.#setupSelection();
     this.#setupPicking();
@@ -170,7 +174,27 @@ export class App {
     }
   }
 
+  // Workspaces: 'design' (Fusion-style modelling) or 'boxgen' (IoT enclosure generator).
+  setWorkspace(ws) {
+    if (ws === this.workspace) return;
+    this.cancelTools();
+    this.select([]);
+    this.workspace = ws;
+    const design = ws === 'design';
+    for (const g of [this.doc.group, this.doc.sketchGroup, this.doc.planeGroup]) g.visible = design;
+    this.originGroup.visible = design && this.originVisible;
+    this.vp.transform.detach();
+    document.body.dataset.workspace = ws;
+    try { localStorage.setItem('minicad-workspace', ws); } catch { /* storage blocked */ }
+    this.boxgen.setActive(!design);
+    if (design) { this.setHint('Select a command from the toolbar, or right-click for the marking menu.'); this.fitAll(); }
+    bus.emit('workspace', { workspace: ws });
+    bus.emit('doc:renamed');
+    bus.emit('tool:changed');
+  }
+
   fitAll() {
+    if (this.workspace === 'boxgen') return this.boxgen.fit();
     const box = new THREE.Box3();
     for (const b of this.doc.bodies) if (b.visible) box.union(b.worldBox());
     for (const s of this.doc.sketches) if (s.visible && s.shapes.length) box.union(new THREE.Box3().setFromObject(s.object));
@@ -234,7 +258,7 @@ export class App {
     c.addEventListener('pointerup', (e) => {
       if (!down || down.button !== 0) return;
       const d = down; down = null;
-      if (d.gizmo || this.manipulating || this.pickMode || this.sketch.active || this.sketch.picking || this.measure.active) return;
+      if (this.workspace !== 'design' || d.gizmo || this.manipulating || this.pickMode || this.sketch.active || this.sketch.picking || this.measure.active) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
       const hit = this.pickAt(e);
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -1293,7 +1317,8 @@ export class App {
     const visible = this.doc.bodies.filter((b) => b.visible);
     if (!visible.length) { toast('Nothing to export - create a body first.', 'warn'); return; }
     const scene = new THREE.Scene();
-    for (const b of visible) scene.add(new THREE.Mesh(worldGeometry(b)));
+    // slicers use Z as "up", the viewport uses Y: turn the model so it sits upright on the bed
+    for (const b of visible) scene.add(new THREE.Mesh(worldGeometry(b).rotateX(Math.PI / 2)));
     const data = new STLExporter().parse(scene, { binary: true });
     const name = this.#fileName('.stl');
     this.#download(new Blob([data], { type: 'model/stl' }), name);
@@ -1309,6 +1334,11 @@ export class App {
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (document.querySelector('.modal-back')) return;
+      if (this.workspace === 'boxgen') {
+        if (e.key === 'Escape' && dialogOpen()) { closeDialog(false, 'user'); return; }
+        if (this.boxgen.key(e)) e.preventDefault();
+        return;
+      }
       if (this.sketch.key(e) || this.measure.key(e)) { e.preventDefault(); return; }
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();

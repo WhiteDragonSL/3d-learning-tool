@@ -112,8 +112,10 @@ export function buildCommands(app, ui) {
   add('open', 'Open…', 'open', () => app.openFile(), { repeatable: false });
   add('save', 'Save', 'save', () => app.saveFile(), { shortcut: 'Ctrl+S', repeatable: false });
   add('export', 'Export STL', 'export', () => app.exportSTL(), { repeatable: false });
-  add('undo', 'Undo', 'undo', () => { app.cancelTools(); app.doc.undo(); }, { shortcut: 'Ctrl+Z', repeatable: false });
-  add('redo', 'Redo', 'redo', () => { app.cancelTools(); app.doc.redo(); }, { shortcut: 'Ctrl+Y', repeatable: false });
+  add('undo', 'Undo', 'undo', () => { if (app.workspace === 'boxgen') return app.boxgen.undo(); app.cancelTools(); app.doc.undo(); }, { shortcut: 'Ctrl+Z', repeatable: false });
+  add('redo', 'Redo', 'redo', () => { if (app.workspace === 'boxgen') return app.boxgen.redo(); app.cancelTools(); app.doc.redo(); }, { shortcut: 'Ctrl+Y', repeatable: false });
+  add('ws-design', 'Design Workspace', 'component', () => app.setWorkspace('design'), { repeatable: false, desc: 'Fusion-style modelling with sketches and features.' });
+  add('ws-boxgen', 'IoT BoxGen Workspace', 'boxgen', () => app.setWorkspace('boxgen'), { repeatable: false, desc: 'Generate a 3D-printable enclosure around electronic components.' });
   add('home', 'Start Screen', 'home', () => ui.home(), { repeatable: false });
   add('tutorials', 'Tutorials', 'help', () => ui.tutorials.toggle(true), { repeatable: false });
   add('search', 'Command Search', 'search', () => ui.search(), { key: 'S', repeatable: false });

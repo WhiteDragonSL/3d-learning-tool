@@ -63,7 +63,8 @@ const P = {
   profile: '<path d="M4 6h16v12H4z" fill="#dff3e4"/>',
   copy: '<rect x="8" y="8" width="13" height="13" rx="1"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
   appearance:'<circle cx="12" cy="12" r="9" fill="#fff"/><circle cx="8" cy="10" r="1.6" fill="#d9363e"/><circle cx="12" cy="7" r="1.6" fill="#2f9e44"/><circle cx="16" cy="10" r="1.6" fill="#1c6fd1"/>',
-  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
+  boxgen: '<path d="M3 8l9-4 9 4v9l-9 4-9-4z" fill="#cfe3f7"/><path d="M3 8l9 4 9-4M12 12v9"/><rect x="7" y="11.5" width="4" height="3" fill="#2f9e44" transform="skewY(20)"/><circle cx="16" cy="13.5" r="1.2" fill="#ff8a1f"/>',
+  moon:'<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   resume:'<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/><path d="M10.5 9v6l5-3z" fill="currentColor"/>',
   // sketch
