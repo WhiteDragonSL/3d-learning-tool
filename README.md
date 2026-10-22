@@ -1,7 +1,7 @@
 # MiniCAD Learn
 
 A browser-based 3D modelling learning tool that follows the layout and workflow of Fusion 360, with built-in interactive tutorials.
-Final year project prototype: *A Web-Based Interactive 3D Modelling Learning Tool* (COMP1682).
+Final year project prototype: *A Web-Based Interactive 3D Modelling Learning Tool
 
 ## Run it
 
