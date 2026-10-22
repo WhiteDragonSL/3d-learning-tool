@@ -1,0 +1,20 @@
+{
+  "name": "3d-learning-tool",
+  "version": "1.0.0",
+  "description": "MiniCAD Learn - a simplified, browser-based 3D modelling tool (Fusion 360 style) with interactive tutorials",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.186.1",
+    "three-bvh-csg": "^0.0.18",
+    "three-mesh-bvh": "^0.9.16"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}

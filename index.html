@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MiniCAD Learn</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button class="brand" title="Start screen"><span class="logo">◆</span> MiniCAD <b>Learn</b></button>
+      <div class="appbar-left" id="appbar-left"></div>
+      <div class="doc-tab" title="Double-click to rename"><span id="doc-title">Untitled</span></div>
+      <div class="top-right" id="appbar-right"></div>
+    </header>
+
+    <nav id="ribbon"></nav>
+
+    <main id="workspace">
+      <aside id="left-panel">
+        <section class="panel" id="browser-panel">
+          <div class="panel-head">BROWSER</div>
+          <div class="panel-body" id="browser"></div>
+        </section>
+        <section class="panel" id="props-panel">
+          <div class="panel-head">PROPERTIES</div>
+          <div class="panel-body" id="props"></div>
+        </section>
+      </aside>
+
+      <div id="viewport">
+        <div id="viewcube"></div>
+        <div id="sketch-palette" class="hidden"></div>
+        <div id="dialog-host"></div>
+        <div id="navbar"></div>
+        <div id="labels"></div>
+        <div id="toasts"></div>
+      </div>
+
+      <aside id="learn-panel" class="hidden">
+        <div class="panel-head">TUTORIALS <button class="icon-btn" id="learn-close" title="Close">✕</button></div>
+        <div class="panel-body" id="learn"></div>
+      </aside>
+    </main>
+
+    <footer id="bottombar">
+      <div id="timeline"></div>
+      <div id="statusbar">
+        <span id="status-hint">Select a command from the toolbar, or right-click in the viewport for the marking menu.</span>
+        <span class="spacer"></span>
+        <span id="status-overlap"></span>
+        <label><input type="checkbox" id="opt-snap" checked /> Snap</label>
+        <label><input type="checkbox" id="opt-overlap" checked /> Interference check</label>
+        <label title="When on, a move that makes bodies overlap is undone"><input type="checkbox" id="opt-block" /> Block overlaps</label>
+        <span class="units">Units: mm</span>
+      </div>
+    </footer>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
