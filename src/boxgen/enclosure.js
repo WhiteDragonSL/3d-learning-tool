@@ -175,9 +175,19 @@ export function buildBase(s) {
       const n = Math.max(1, Math.floor((D * 0.6) / 4.5));
       for (let i = 0; i < n; i++) {
         const z = (i - (n - 1) / 2) * 4.5;
-        for (const side of [-1, 1]) cuts.push(box(t + 3, vh, 2, side * (W / 2 + t / 2), (H - lip) / 2, z));
+        for (const side of [-1, 1]) {
+          if (side < 0 && s.cableHole > 0 && Math.abs(z) < s.cableHole / 2 + 3) continue; // keep clear of the cable hole
+          cuts.push(box(t + 3, vh, 2, side * (W / 2 + t / 2), (H - lip) / 2, z));
+        }
       }
     }
+  }
+  // cable entry hole in the left wall, low down
+  if (s.cableHole > 0) {
+    const r = s.cableHole / 2, g = new THREE.CylinderGeometry(r, r, t + 3, 32);
+    g.rotateZ(Math.PI / 2);
+    g.translate(-(W / 2 + t / 2), Math.min(r + 3, H / 2), 0);
+    cuts.push(clean(g));
   }
   if (adds.length) base = csg(base, merge(adds), ADDITION);
   if (cuts.length) base = csg(base, merge(cuts), SUBTRACTION);
@@ -218,6 +228,18 @@ export function buildLid(s) {
       const swap = (p.part.rot / 90) % 2;
       const a = c.width + 2 * cl, b = (c.height || c.width) + 2 * cl;
       cuts.push(box(swap ? b : a, lip + t + 2, swap ? a : b, p.x, H + (t - lip) / 2, p.z));
+    }
+  }
+  // ventilation slots across the middle of the lid, kept clear of top openings
+  if (s.lidVents) {
+    const openings = cutoutPlacements(s).filter((p) => p.wall === 'lid').map((p) => [p.x, p.z, (p.cutout.width + (p.cutout.height || p.cutout.width)) / 2 + 4]);
+    const len = Math.min(W * 0.55, W - 30), n = Math.floor((D * 0.45) / 5);
+    if (len >= 10) {
+      for (let i = 0; i < n; i++) {
+        const z = (i - (n - 1) / 2) * 5;
+        if (openings.some(([ox, oz, r]) => Math.abs(oz - z) < r && Math.abs(ox) < len / 2 + r)) continue;
+        cuts.push(box(len, t + 2, 2.2, 0, H + t / 2, z));
+      }
     }
   }
   if (cuts.length) lid = csg(lid, merge(cuts), SUBTRACTION);

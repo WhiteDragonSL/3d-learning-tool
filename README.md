@@ -42,10 +42,12 @@ The toolbar icons are kept to a short beginner set; every other command is in th
 
 A second workspace (switch with the **DESIGN ▾ / IOT BOXGEN ▾** button, or pick **IoT Enclosure** on the start screen) that generates 3D-printable enclosures for electronics projects.
 
-- **Component library:** ESP32 DevKit V1, Arduino Uno R3, IR obstacle sensor, HC-SR04 ultrasonic sensor, SG90 servo, 18650 holder, 9V battery, plus your own **custom components** (size, mounting, one port). Search box at the top.
-- **Placement:** drag components on the enclosure floor, `R` / `Shift+R` rotates 90°, arrow keys nudge (Shift = 10 mm), `Del` deletes, `Ctrl+D` duplicates, `Ctrl+Z` / `Ctrl+Y` undo / redo. The inspector edits X / Y (height) / Z exactly. Ports snap flush to a wall when dragged close; **Snap to wall** does it for you.
-- **Enclosure:** **Auto-Fit** (smallest box + padding), **Arrange** (packs the parts in rows, then fits), inner size, wall thickness, corner radius, lid lip tolerance, standoff height, cutout clearance, ventilation slots, screw or friction lid.
-- **Generated geometry:** shell with rounded corners, PCB standoffs with pilot holes, floor screw holes, corner screw pillars, port and sensor cutouts in the walls (or the lid, for top openings), vent slots, and a lid with an inset lip and countersunk screw holes. Booleans run in a Web Worker so the page stays responsive.
+- **Pick from a checklist:** tick the components you need and set **how many** of each (− / + or type a number): ESP32 DevKit V1, Arduino Uno R3, IR obstacle sensor, HC-SR04 ultrasonic sensor, SG90 servo, 18650 holder, 9V battery, plus your own **custom components**. Search box at the top.
+- **Generate enclosure:** everything is combined into **one** case. Parts with a port or sensor window are turned to face an outside wall and placed flush against it (so the hole lines up); the rest are packed in the middle. A small search picks which wall each part goes on to keep the box compact and close to square.
+- **Room for wiring and air:** a set gap between all parts (default 10 mm), extra space above the tallest part for cables (default 10 mm), clearance at bare walls, vent slots in the side walls and the lid, and an optional cable entry hole. Changing a spacing setting re-arranges the case live.
+- **Fine-tuning (optional):** drag parts on the floor, `R` / `Shift+R` rotates 90°, arrow keys nudge, `Del` deletes, `Ctrl+Z` / `Ctrl+Y` undo / redo, inspector for exact X / Y / Z, **Snap to wall**, **Auto-Fit**. After moving parts by hand, **Re-generate enclosure** returns to the automatic layout.
+- **Shell settings:** wall thickness, corner radius, lid lip tolerance, PCB standoff height, cutout clearance, screw or friction lid.
+- **Generated geometry:** shell with rounded corners, PCB standoffs with pilot holes, floor screw holes, corner screw pillars, port and sensor cutouts in the walls (or the lid, for top openings), vent slots, a cable entry hole, and a lid with an inset lip, vent slots and countersunk screw holes. Booleans run in a Web Worker so the page stays responsive.
 - **Views:** Assembled, Exploded, Base only, Lid only, plus Components / X-Ray / Wireframe / Labels toggles. Live checks flag parts that stick out, overlap, hit a pillar or are too tall, and ports that don't reach a wall.
 - **Export:** Base and Lid as binary **STL**, laid flat (Z up) and ready to slice; or **Edit in Design workspace** to keep modelling them with the Fusion tools.
 
@@ -63,7 +65,7 @@ A start screen asks whether to resume your last design or start something new, t
 - `src/ops.js`: boolean operations (three-bvh-csg), shell, split, patterns, mirror, precise interference (three-mesh-bvh)
 - `src/geometry.js`: pure geometry: profile outlines (fillets, splines, offsets), sweep/loft/lathe/coil generators, chamfered box, mass properties, curvature
 - `src/features.js`: the extra Fusion commands (Loft, Sweep, Pipe, Rib, Hole, Thread, Draft, Offset Face, Split, Align, construction geometry, analyses, sketch modify tools)
-- `src/boxgen/`: IoT BoxGen workspace: `library.js` (component data), `enclosure.js` (parametric base/lid geometry), `worker.js` (builds it off the main thread), `boxgen.js` (scene, panels, placement, export)
+- `src/boxgen/`: IoT BoxGen workspace: `library.js` (component data), `layout.js` (automatic layout), `enclosure.js` (parametric base/lid geometry), `worker.js` (builds it off the main thread), `boxgen.js` (scene, panels, placement, export)
 - `src/tools/`: sketch tool, measure tool, extrude drag arrow
 - `src/ui/`: toolbar/app bar, browser, properties, timeline, overlays (nav bar, sketch palette, marking menu, search, help), dialogs, start screen
 - `src/tutorials.js`: lesson content and the tutorial engine

@@ -4,6 +4,7 @@ import { CATEGORIES, LIBRARY, categoryOf, customComponent } from './library.js';
 import {
   buildBase, buildLid, printReady, footprint, rotXZ, cutoutPlacements, pillarCenters, lipHeight, PILLAR_RADIUS,
 } from './enclosure.js';
+import { layoutParts } from './layout.js';
 import { featureEdges } from '../model.js';
 import { meshBody } from '../ops.js';
 import { icon } from '../icons.js';
@@ -17,12 +18,16 @@ import { bus } from '../events.js';
 // ---------------------------------------------------------------------------
 const STORE_KEY = 'minicad-boxgen';
 const PORT_COLOR = 0xff8a1f;
+// settings that re-run the automatic layout
+const RELAYOUT = new Set(['wiringGap', 'headroom', 'padding', 'standoffHeight', 'lid']);
 
 export const defaultState = () => ({
   name: 'IoT Enclosure',
   inner: { width: 90, depth: 70, height: 35 },
   padding: 5, wall: 2, radius: 3, tolerance: 0.2, standoffHeight: 5, clearance: 0.5, lipHeight: 4,
-  lid: 'screw', vents: true,
+  wiringGap: 10, headroom: 10, cableHole: 8,
+  lid: 'screw', vents: true, lidVents: true,
+  layoutManual: false, // true once parts were moved by hand
   parts: [], custom: [],
 });
 
@@ -93,7 +98,7 @@ export class BoxGen {
       this.#renderLibrary();
       this.#renderParams();
       this.rebuild(true);
-      this.app.setHint('<b>IoT BoxGen:</b> add components from the library, drag them on the floor (<kbd>R</kbd> rotates, <kbd>Del</kbd> removes), then <b>Auto-Fit</b> and export the STL files.');
+      this.app.setHint('<b>IoT BoxGen:</b> tick the components you need and how many, press <b>Generate enclosure</b>, then export the STL files. Drag parts to fine-tune (<kbd>R</kbd> rotates).');
       setTimeout(() => this.fit(), 50);
     }
   }
@@ -134,6 +139,7 @@ export class BoxGen {
     this.#save();
     if (parts) this.#syncParts();
     this.#renderParams();
+    if (this.active) this.#renderLibrary();
     if (rebuild) this.rebuild();
     bus.emit('boxgen:changed');
   }
@@ -164,36 +170,71 @@ export class BoxGen {
   // ======================================================================
   get library() { return [...LIBRARY, ...this.state.custom]; }
 
-  addComponent(def) {
+  // ---------- the checklist: how many of each component ----------
+  count(defId) { return this.state.parts.filter((p) => p.def.id === defId).length; }
+
+  // Set the quantity of a component. With the automatic layout on, the whole
+  // enclosure is re-arranged around the new set; after manual moves, only the
+  // added parts are placed (in free space, growing the box if needed).
+  setQty(defId, n) {
     const s = this.state;
-    const part = { uid: newUid(), def: structuredClone(def), x: 0, z: 0, y: def.mount === 'standoff' ? s.standoffHeight : 0, rot: 0 };
-    const { w, d } = footprint(part);
-    const spot = this.#freeSpot(w, d);
+    const def = this.library.find((d) => d.id === defId);
+    if (!def) return;
+    n = Math.max(0, Math.min(20, Math.round(n)));
+    const have = s.parts.filter((p) => p.def.id === defId);
+    if (n === have.length) return;
     this.change(() => {
-      s.parts.push(part);
-      if (spot) { part.x = spot[0]; part.z = spot[1]; } else {
-        // no room: put it on the box's shorter side and grow the box around everything
-        const others = s.parts.filter((p) => p !== part);
-        if (s.inner.width >= s.inner.depth) part.z = Math.max(...others.map((p) => p.z + footprint(p).d / 2), 0) + 4 + d / 2;
-        else part.x = Math.max(...others.map((p) => p.x + footprint(p).w / 2), 0) + 4 + w / 2;
-        this.#fit();
+      if (n < have.length) {
+        const drop = new Set(have.slice(n));
+        s.parts = s.parts.filter((p) => !drop.has(p));
+        if (this.selected && !this.part(this.selected)) this.selected = null;
+      } else {
+        for (let i = have.length; i < n; i++) {
+          const part = { uid: newUid(), def: structuredClone(def), x: 0, z: 0, y: def.mount === 'standoff' ? s.standoffHeight : 0, rot: 0 };
+          s.parts.push(part);
+          if (s.layoutManual) this.#placeNew(part);
+        }
       }
-      this.selected = part.uid;
+      if (!s.layoutManual) layoutParts(s);
     });
-    toast(`Added <b>${esc(def.name)}</b>${spot ? '' : ' - the box grew to fit it'}.`, 'ok', 2200);
-    bus.emit('boxgen:add', { id: def.id });
+    this.#renderLibrary();
+    bus.emit('boxgen:qty', { id: defId, qty: n });
   }
 
-  // first place on the floor where a w×d footprint fits without touching anything
-  #freeSpot(w, d) {
+  // Combine every selected component into one enclosure (automatic layout).
+  generate() {
+    const s = this.state;
+    if (!s.parts.length) { toast('Tick the components you need in the list first.', 'warn'); return; }
+    this.change(() => { s.layoutManual = false; this.selected = null; layoutParts(s); });
+    const i = s.inner;
+    toast(`Enclosure generated for ${s.parts.length} component${s.parts.length > 1 ? 's' : ''}: inside ${r1(i.width)} × ${r1(i.depth)} × ${r1(i.height)} mm.`, 'ok', 3200);
+    bus.emit('boxgen:generate', { count: s.parts.length });
+    setTimeout(() => this.fit(), 60);
+  }
+
+  // a part added after manual moves: first free spot, else beside the others (box grows)
+  #placeNew(part) {
+    const s = this.state;
+    const { w, d } = footprint(part);
+    const spot = this.#freeSpot(w, d, part);
+    if (spot) { part.x = spot[0]; part.z = spot[1]; return; }
+    const others = s.parts.filter((p) => p !== part);
+    const g = s.wiringGap;
+    if (s.inner.width >= s.inner.depth) part.z = Math.max(...others.map((p) => p.z + footprint(p).d / 2), 0) + g + d / 2;
+    else part.x = Math.max(...others.map((p) => p.x + footprint(p).w / 2), 0) + g + w / 2;
+    this.#fit();
+  }
+
+  // first place on the floor where a w×d footprint fits, keeping the wiring gap to other parts
+  #freeSpot(w, d, self) {
     const { width: W, depth: D } = this.state.inner;
-    const m = 1.5;
-    const rects = this.state.parts.map((p) => { const f = footprint(p); return [p.x - f.w / 2, p.z - f.d / 2, p.x + f.w / 2, p.z + f.d / 2]; });
+    const m = 1.5, g = Math.max(m, this.state.wiringGap);
+    const rects = this.state.parts.filter((p) => p !== self).map(rectOf);
     const pillars = pillarCenters(this.state);
     const ok = (x, z) => {
       const a = [x - w / 2, z - d / 2, x + w / 2, z + d / 2];
       if (a[0] < -W / 2 + m || a[2] > W / 2 - m || a[1] < -D / 2 + m || a[3] > D / 2 - m) return false;
-      if (rects.some((b) => a[0] < b[2] + m && a[2] > b[0] - m && a[1] < b[3] + m && a[3] > b[1] - m)) return false;
+      if (rects.some((b) => a[0] < b[2] + g && a[2] > b[0] - g && a[1] < b[3] + g && a[3] > b[1] - g)) return false;
       return !pillars.some(([px, pz]) => rectCircleDist(a, px, pz) < PILLAR_RADIUS + 0.5);
     };
     if (ok(0, 0)) return [0, 0];
@@ -204,27 +245,30 @@ export class BoxGen {
     return null;
   }
 
+  // ---------- fine-tuning single parts (switches the layout to manual) ----------
+  #manual(fn) { this.change(() => { this.state.layoutManual = true; fn(); }); }
+
   removeSelected() {
     const p = this.selectedPart;
     if (!p) return;
-    this.change(() => { this.state.parts = this.state.parts.filter((q) => q !== p); this.selected = null; });
+    this.change(() => {
+      this.state.parts = this.state.parts.filter((q) => q !== p);
+      this.selected = null;
+      if (!this.state.layoutManual) layoutParts(this.state);
+    });
+    this.#renderLibrary();
   }
 
   duplicateSelected() {
     const p = this.selectedPart;
     if (!p) return;
-    const f = footprint(p);
-    this.change(() => {
-      const c = { ...structuredClone(p), uid: newUid(), x: p.x + Math.min(f.w, 20) / 2 + 4, z: p.z + 4 };
-      this.state.parts.push(c);
-      this.selected = c.uid;
-    });
+    this.setQty(p.def.id, this.count(p.def.id) + 1);
   }
 
   rotateSelected(delta = 90) {
     const p = this.selectedPart;
     if (!p) return;
-    this.change(() => { p.rot = (((p.rot + delta) % 360) + 360) % 360; });
+    this.#manual(() => { p.rot = (((p.rot + delta) % 360) + 360) % 360; });
   }
 
   // move the part so the side with its first wall port touches the wall it faces
@@ -232,7 +276,7 @@ export class BoxGen {
     if (!p) return;
     const pl = cutoutPlacements(this.state).find((c) => c.part === p && c.wall !== 'lid');
     if (!pl) { toast('This component has no wall port to line up.', 'warn'); return; }
-    this.change(() => {
+    this.#manual(() => {
       p.x += pl.n[0] * pl.gap; p.z += pl.n[1] * pl.gap;
       // slide along the wall (towards the middle) until the corner pillars are clear
       const axis = pl.n[0] ? 'z' : 'x';
@@ -245,41 +289,24 @@ export class BoxGen {
   setPartField(field, value) {
     const p = this.selectedPart;
     if (!p || !Number.isFinite(value)) return;
-    this.change(() => { p[field] = field === 'y' ? Math.max(0, value) : value; });
+    this.#manual(() => { p[field] = field === 'y' ? Math.max(0, value) : value; });
+  }
+
+  nudgeSelected(dx, dz) {
+    const p = this.selectedPart;
+    if (p) this.#manual(() => { p.x = r1(p.x + dx); p.z = r1(p.z + dz); });
   }
 
   // ======================================================================
   // enclosure sizing
   // ======================================================================
+  // smallest box around the parts where they are now (keeps a manual layout)
   autoFit() {
-    if (!this.state.parts.length) { toast('Add some components first - Auto-Fit sizes the box around them.', 'warn'); return; }
+    if (!this.state.parts.length) { toast('Tick some components first - Auto-Fit sizes the box around them.', 'warn'); return; }
     this.change(() => this.#fit());
     const i = this.state.inner;
     toast(`Auto-Fit: inside ${r1(i.width)} × ${r1(i.depth)} × ${r1(i.height)} mm.`, 'ok');
     bus.emit('boxgen:autofit');
-    setTimeout(() => this.fit(), 60);
-  }
-
-  // Pack every part into rows (biggest first), then fit the box around them.
-  autoArrange() {
-    const s = this.state;
-    if (!s.parts.length) { toast('Add some components first.', 'warn'); return; }
-    this.change(() => {
-      const gap = 4;
-      const parts = [...s.parts].sort((a, b) => footprint(b).d - footprint(a).d || footprint(b).w - footprint(a).w);
-      const area = parts.reduce((t, p) => { const f = footprint(p); return t + (f.w + gap) * (f.d + gap); }, 0);
-      const rowWidth = Math.max(Math.sqrt(area) * 1.25, ...parts.map((p) => footprint(p).w));
-      let x = 0, z = 0, rowDepth = 0;
-      for (const p of parts) {
-        const f = footprint(p);
-        if (x > 0 && x + f.w > rowWidth) { x = 0; z += rowDepth + gap; rowDepth = 0; }
-        p.x = x + f.w / 2; p.z = z + f.d / 2;
-        x += f.w + gap;
-        rowDepth = Math.max(rowDepth, f.d);
-      }
-      this.#fit();
-    });
-    toast('Components packed and the box fitted around them. Use “Snap to wall” for parts with ports.', 'ok', 3500);
     setTimeout(() => this.fit(), 60);
   }
 
@@ -297,7 +324,7 @@ export class BoxGen {
     for (const p of s.parts) { p.x = r1(p.x - cx); p.z = r1(p.z - cz); }
     s.inner.width = r1(Math.max(20, x1 - x0 + 2 * pad));
     s.inner.depth = r1(Math.max(20, z1 - z0 + 2 * pad));
-    s.inner.height = r1(Math.max(10, top + pad, s.lipHeight + 6));
+    s.inner.height = r1(Math.max(12, top + s.headroom, s.lipHeight + 6));
     // grow until the corner screw pillars clear every part
     for (let i = 0; i < 20 && this.#pillarClash(); i++) { s.inner.width += 2; s.inner.depth += 2; }
   }
@@ -306,10 +333,12 @@ export class BoxGen {
     return pillarCenters(this.state).some(([px, pz]) => this.state.parts.some((p) => rectCircleDist(rectOf(p), px, pz) < PILLAR_RADIUS + 0.3));
   }
 
+  // Enclosure settings. Spacing settings re-run the automatic layout while it is on.
   setParam(key, value, { live = false } = {}) {
     const s = this.state;
     this.begin();
-    if (key.startsWith('inner.')) s.inner[key.slice(6)] = value; else s[key] = value;
+    if (key.startsWith('inner.')) { s.inner[key.slice(6)] = value; if (s.parts.length) s.layoutManual = true; } else s[key] = value;
+    if (!s.layoutManual && s.parts.length && RELAYOUT.has(key)) { layoutParts(s); this.#syncParts(); }
     if (live) { this.#renderReadouts(); this.rebuild(); return; }
     this.end({ parts: false });
   }
@@ -497,6 +526,12 @@ export class BoxGen {
       this.#placePart(p, o);
     }
     for (const uid of [...this.partObjs.keys()]) if (!seen.has(uid)) this.#disposePart(uid);
+    // number repeated parts in their labels: 'IR Obstacle Sensor #2'
+    const seenDef = {};
+    for (const p of this.state.parts) {
+      const n = this.count(p.def.id), k = (seenDef[p.def.id] = (seenDef[p.def.id] || 0) + 1);
+      this.partObjs.get(p.uid).label.textContent = n > 1 ? p.def.name + ' #' + k : p.def.name;
+    }
     this.#refreshPartLooks();
   }
 
@@ -644,6 +679,7 @@ export class BoxGen {
         canvas.releasePointerCapture?.(e.pointerId);
         if (drag.moved) {
           drag.p.x = r1(drag.p.x); drag.p.z = r1(drag.p.z);
+          this.state.layoutManual = true;
           this.pending = drag.before;
           this.end();
           bus.emit('boxgen:move');
@@ -681,7 +717,7 @@ export class BoxGen {
     if (k === 'Delete' || k === 'Backspace') { this.removeSelected(); return true; }
     const step = e.shiftKey ? 10 : 1;
     const arrows = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
-    if (arrows[k]) { this.change(() => { p.x = r1(p.x + arrows[k][0]); p.z = r1(p.z + arrows[k][1]); }); return true; }
+    if (arrows[k]) { this.nudgeSelected(...arrows[k]); return true; }
     return false;
   }
 
@@ -697,18 +733,33 @@ export class BoxGen {
     this.#renderViewbar();
 
     this.libEl.addEventListener('click', (e) => {
-      const add = e.target.closest('[data-add]');
-      if (add) { const def = this.library.find((d) => d.id === add.dataset.add); if (def) this.addComponent(def); return; }
+      const qty = e.target.closest('[data-qty]');
+      if (qty) { const id = qty.dataset.qty; this.setQty(id, this.count(id) + +qty.dataset.d); return; }
       const del = e.target.closest('[data-del-custom]');
       if (del) {
-        this.change(() => { this.state.custom = this.state.custom.filter((d) => d.id !== del.dataset.delCustom); }, { rebuild: false, parts: false });
+        const id = del.dataset.delCustom;
+        this.setQty(id, 0);
+        this.change(() => { this.state.custom = this.state.custom.filter((d) => d.id !== id); }, { rebuild: false, parts: false });
         this.#renderLibrary();
         return;
       }
-      if (e.target.closest('[data-a=create]')) this.#createCustom();
+      if (e.target.closest('[data-a=create]')) return this.#createCustom();
+      if (e.target.closest('[data-a=generate]')) return this.generate();
+      if (e.target.closest('[data-a=clear-sel]')) return this.clearAll();
+      if (e.target.closest('.bg-qty, details, input, select')) return;
+      // clicking a row ticks it (1) or unticks it (0)
+      const row = e.target.closest('[data-item]');
+      if (row) this.setQty(row.dataset.item, this.count(row.dataset.item) ? 0 : 1);
+    });
+    this.libEl.addEventListener('change', (e) => {
+      if (e.target.matches('[data-qty-input]')) this.setQty(e.target.dataset.qtyInput, parseInt(e.target.value, 10) || 0);
     });
     this.libEl.addEventListener('input', (e) => { if (e.target.matches('[data-a=search]')) { this.search = e.target.value; this.#renderLibrary(true); } });
-    this.libEl.addEventListener('keydown', (e) => e.stopPropagation());
+    this.libEl.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      const row = e.target.matches?.('[data-item]') ? e.target : null;
+      if (row && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); this.setQty(row.dataset.item, this.count(row.dataset.item) ? 0 : 1); this.libEl.querySelector(`[data-item="${row.dataset.item}"]`)?.focus(); }
+    });
     this.paramsEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur?.(); });
   }
 
@@ -723,6 +774,7 @@ export class BoxGen {
     this.viewbar.querySelectorAll('[data-tog]').forEach((b) => { b.onclick = () => this.setView(b.dataset.tog, !this.view[b.dataset.tog]); });
   }
 
+  // The component checklist: tick a row (or use − / +) to choose how many of each.
   #renderLibrary(keepFocus = false) {
     const q = this.search.trim().toLowerCase();
     const items = this.library.filter((d) => !q || d.name.toLowerCase().includes(q) || categoryOf(d.category).label.toLowerCase().includes(q));
@@ -732,19 +784,28 @@ export class BoxGen {
       d.mount === 'standoff' ? '<span class="bg-badge" title="Sits on PCB standoffs">standoffs</span>' : d.mount === 'floor' ? '<span class="bg-badge" title="Screwed through the floor">floor screws</span>' : '',
       (d.cutouts || []).length ? `<span class="bg-badge port" title="${esc(d.cutouts.map((c) => c.label || 'port').join(', '))}">${d.cutouts.length} cutout${d.cutouts.length > 1 ? 's' : ''}</span>` : '',
     ].join('');
+    const total = this.state.parts.length;
+    const types = new Set(this.state.parts.map((p) => p.def.id)).size;
     const html = `
-      <div class="panel-head">COMPONENT LIBRARY</div>
+      <div class="panel-head">COMPONENTS <small class="bg-head-hint">tick what you need</small></div>
       <div class="bg-search">${icon('search')}<input data-a="search" placeholder="Search components…" value="${esc(this.search)}"></div>
       <div class="panel-body bg-lib-body">
         ${cats.map(({ c, list }) => `
           <div class="bg-cat"><span class="dot" style="background:${c.color}"></span>${c.label}</div>
-          ${list.map((d) => `
-            <div class="bg-item">
-              <span class="bg-swatch" style="background:${c.color}"></span>
+          ${list.map((d) => {
+            const n = this.count(d.id);
+            return `
+            <div class="bg-item ${n ? 'on' : ''}" data-item="${d.id}" role="checkbox" aria-checked="${!!n}" tabindex="0" title="${n ? 'Click to remove' : 'Click to add'}">
+              <span class="bg-check">${n ? '✓' : ''}</span>
               <div class="bg-item-text"><b>${esc(d.name)}</b><small>${dim(d)}</small><div class="bg-badges">${badges(d)}</div></div>
               ${d.category === 'custom' ? `<button class="icon-btn bg-x" data-del-custom="${d.id}" title="Remove from library">✕</button>` : ''}
-              <button class="bg-add" data-add="${d.id}" title="Add to the enclosure">+ Add</button>
-            </div>`).join('')}`).join('') || '<div class="tree-empty">No component matches.</div>'}
+              <div class="bg-qty ${n ? '' : 'off'}" title="How many">
+                <button data-qty="${d.id}" data-d="-1" ${n ? '' : 'disabled'} aria-label="One less">−</button>
+                <input data-qty-input="${d.id}" type="number" min="0" max="20" value="${n}" aria-label="Quantity">
+                <button data-qty="${d.id}" data-d="1" aria-label="One more">+</button>
+              </div>
+            </div>`;
+          }).join('')}`).join('') || '<div class="tree-empty">No component matches.</div>'}
         <details class="bg-custom">
           <summary>${icon('new')} Create custom component</summary>
           <div class="bg-form">
@@ -753,13 +814,21 @@ export class BoxGen {
             <label>Mounting<select data-c="mount"><option value="standoff">PCB standoffs (4 corners)</option><option value="floor">Floor screws</option><option value="none">None</option></select></label>
             <label>Port / opening<select data-c="port"><option value="none">None</option><option value="front">Front edge</option><option value="back">Back edge</option><option value="left">Left edge</option><option value="right">Right edge</option><option value="top">Top (through the lid)</option></select></label>
             <div class="bg-row3"><label>Port W<input data-c="portWidth" type="number" value="9" min="1" step="0.5"></label><label>Port H<input data-c="portHeight" type="number" value="4" min="1" step="0.5"></label><span></span></div>
-            <button class="btn small primary" data-a="create">Add to library</button>
+            <button class="btn small primary" data-a="create">Add to the list</button>
           </div>
         </details>
+      </div>
+      <div class="bg-gen">
+        <div class="bg-gen-sum"><span>${total ? `<b>${total}</b> component${total > 1 ? 's' : ''} · ${types} type${types > 1 ? 's' : ''}` : 'Nothing ticked yet'}</span>
+          ${total ? '<button class="link" data-a="clear-sel">Clear</button>' : ''}</div>
+        <button class="btn primary bg-gen-btn" data-a="generate" ${total ? '' : 'disabled'}>${icon('boxgen')} ${this.state.layoutManual ? 'Re-generate enclosure' : 'Generate enclosure'}</button>
+        ${this.state.layoutManual && total ? '<div class="bg-gen-note">You moved parts by hand - re-generating arranges them automatically again.</div>' : ''}
       </div>`;
     const caret = keepFocus ? this.libEl.querySelector('[data-a=search]')?.selectionStart : null;
     const open = this.libEl.querySelector('.bg-custom')?.open;
+    const scroll = this.libEl.querySelector('.bg-lib-body')?.scrollTop || 0;
     this.libEl.innerHTML = html;
+    this.libEl.querySelector('.bg-lib-body').scrollTop = scroll;
     if (open) this.libEl.querySelector('.bg-custom').open = true;
     if (keepFocus) { const i = this.libEl.querySelector('[data-a=search]'); i.focus(); i.setSelectionRange(caret, caret); }
   }
@@ -770,8 +839,13 @@ export class BoxGen {
     if (!(+v.width > 0 && +v.depth > 0 && +v.height > 0)) { toast('Give the component a width, depth and height.', 'warn'); return; }
     const def = customComponent(v);
     this.change(() => { this.state.custom.push(def); }, { rebuild: false, parts: false });
+    this.setQty(def.id, 1);
+    toast(`<b>${esc(def.name)}</b> added to the list and ticked.`, 'ok');
+  }
+
+  clearAll() {
+    this.change(() => { this.state.parts = []; this.selected = null; this.state.layoutManual = false; });
     this.#renderLibrary();
-    this.addComponent(def);
   }
 
   #renderParams() {
@@ -787,6 +861,18 @@ export class BoxGen {
       <div class="panel-head">ENCLOSURE</div>
       <div class="panel-body">
         <div class="props-section">
+          <h4>WIRING & VENTILATION</h4>
+          ${slider('wiringGap', 'Gap between parts (wiring)', 0, 30, 1)}
+          ${slider('headroom', 'Space above parts (cables)', 0, 40, 1)}
+          ${slider('padding', 'Clearance at the side walls', 0, 20, 0.5)}
+          <div class="bg-switches">
+            <label class="bg-switch"><input type="checkbox" data-k="vents" ${s.vents ? 'checked' : ''}><span></span>Vent slots in the side walls</label>
+            <label class="bg-switch"><input type="checkbox" data-k="lidVents" ${s.lidVents ? 'checked' : ''}><span></span>Vent slots in the lid</label>
+            <label class="bg-switch"><input type="checkbox" data-k="cable" ${s.cableHole > 0 ? 'checked' : ''}><span></span>Cable entry hole (Ø8, left wall)</label>
+          </div>
+          <div class="props-row-label">${s.layoutManual ? 'Layout: moved by hand (spacing applies when you re-generate)' : 'Layout: automatic - parts with ports face the walls'}</div>
+        </div>
+        <div class="props-section">
           <h4>INNER SIZE (MM)</h4>
           <div class="bg-row3 dims">
             <label>Width<input type="number" data-k="inner.width" value="${r1(i.width)}" min="10" step="1"></label>
@@ -794,9 +880,7 @@ export class BoxGen {
             <label>Height<input type="number" data-k="inner.height" value="${r1(i.height)}" min="5" step="1"></label>
           </div>
           <div class="bg-fit">
-            <button class="btn small primary" data-a="autofit" title="Smallest box around the components as they are">${icon('fit')} Auto-Fit</button>
-            <button class="btn small" data-a="arrange" title="Pack the components into rows, then fit">${icon('pattern')} Arrange</button>
-            <label>Padding <input type="number" data-k="padding" value="${s.padding}" min="0" max="30" step="0.5"> mm</label>
+            <button class="btn small" data-a="autofit" title="Smallest box around the components where they are now">${icon('fit')} Auto-Fit</button>
           </div>
           <div class="stat"><span>Outside size</span><b data-out="outer">${r1(i.width + 2 * t)} × ${r1(i.depth + 2 * t)} × ${r1(i.height + 2 * t)} mm</b></div>
         </div>
@@ -805,10 +889,9 @@ export class BoxGen {
           ${slider('wall', 'Wall thickness', 1.5, 5, 0.1)}
           ${slider('radius', 'Corner radius', 0, 15, 0.5)}
           ${slider('tolerance', 'Lid lip tolerance', 0, 1, 0.05)}
-          ${slider('standoffHeight', 'Standoff height (new parts)', 2, 15, 0.5)}
+          ${slider('standoffHeight', 'PCB standoff height', 2, 15, 0.5)}
           ${slider('clearance', 'Cutout clearance', 0, 2, 0.1)}
           <div class="bg-switches">
-            <label class="bg-switch"><input type="checkbox" data-k="vents" ${s.vents ? 'checked' : ''}><span></span>Ventilation slots</label>
             <label class="bg-switch"><input type="checkbox" data-k="lidScrew" ${s.lid === 'screw' ? 'checked' : ''}><span></span>Screw lid (corner pillars)</label>
           </div>
         </div>
@@ -847,11 +930,12 @@ export class BoxGen {
       n.onchange = () => { const v = parseFloat(n.value); if (Number.isFinite(v)) this.setParam(n.dataset.k, Math.max(+n.min || 0, v)); };
     });
     P.querySelector('[data-k=vents]').onchange = (e) => this.setParam('vents', e.target.checked);
+    P.querySelector('[data-k=lidVents]').onchange = (e) => this.setParam('lidVents', e.target.checked);
+    P.querySelector('[data-k=cable]').onchange = (e) => this.setParam('cableHole', e.target.checked ? 8 : 0);
     P.querySelector('[data-k=lidScrew]').onchange = (e) => this.setParam('lid', e.target.checked ? 'screw' : 'friction');
     P.querySelectorAll('[data-pf]').forEach((n) => { n.onchange = () => this.setPartField(n.dataset.pf, parseFloat(n.value)); });
     const act = (a, fn) => { const b = P.querySelector(`[data-a=${a}]`); if (b) b.onclick = fn; };
     act('autofit', () => this.autoFit());
-    act('arrange', () => this.autoArrange());
     act('rotl', () => this.rotateSelected(-90));
     act('rotr', () => this.rotateSelected(90));
     act('snap', () => this.snapToWall());
@@ -867,7 +951,7 @@ export class BoxGen {
 
   #renderReadouts() {
     const s = this.state, P = this.paramsEl;
-    for (const k of ['wall', 'radius', 'tolerance', 'standoffHeight', 'clearance']) { const o = P.querySelector(`[data-out=${k}]`); if (o) o.textContent = `${s[k]} mm`; }
+    for (const k of ['wall', 'radius', 'tolerance', 'standoffHeight', 'clearance', 'wiringGap', 'headroom', 'padding']) { const o = P.querySelector(`[data-out=${k}]`); if (o) o.textContent = `${s[k]} mm`; }
     const o = P.querySelector('[data-out=outer]');
     if (o) o.textContent = `${r1(s.inner.width + 2 * s.wall)} × ${r1(s.inner.depth + 2 * s.wall)} × ${r1(s.inner.height + 2 * s.wall)} mm`;
   }

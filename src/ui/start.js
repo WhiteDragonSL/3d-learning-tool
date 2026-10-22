@@ -113,7 +113,7 @@ export function showStart(app, tutorials, { firstLaunch = false } = {}) {
           <div class="start-card iot" data-a="iot" tabindex="0">
             <div class="big">${icon('boxgen')}</div>
             <h3>IoT Enclosure</h3>
-            <p>Pick boards and sensors, arrange them, and get a 3D-printable case with standoffs and port cutouts.</p>
+            <p>Tick the boards and sensors you need and how many - they are combined into one 3D-printable case with room for wiring and vents.</p>
             <div class="chips">
               <button class="chip" data-iot="esp32-devkit-v1">ESP32</button>
               <button class="chip" data-iot="arduino-uno">Arduino Uno</button>
@@ -154,10 +154,7 @@ export function showStart(app, tutorials, { firstLaunch = false } = {}) {
     tutorials.toggle(false);
     app.boxgen.reset();
     app.setWorkspace('boxgen');
-    if (firstPart) {
-      const def = app.boxgen.library.find((d) => d.id === firstPart);
-      if (def) app.boxgen.addComponent(def);
-    }
+    if (firstPart) app.boxgen.setQty(firstPart, 1);
   };
 
   // ----- step 1: resume or new -----
