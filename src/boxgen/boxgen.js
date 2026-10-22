@@ -382,6 +382,15 @@ export class BoxGen {
     this.#refreshPartLooks();
     this.#renderWarnings();
     clearTimeout(this.rebuildTimer);
+    // no components ticked: show no enclosure
+    if (!this.state.parts.length) {
+      for (const m of [this.baseMesh, this.lidMesh]) {
+        m.geometry.dispose(); m.geometry = new THREE.BufferGeometry();
+        m.children[0].geometry.dispose(); m.children[0].geometry = new THREE.BufferGeometry();
+      }
+      this.#setStatus('Tick components to generate an enclosure.');
+      return;
+    }
     this.#setStatus('Generating…');
     if (now) this.#request(); else this.rebuildTimer = setTimeout(() => this.#request(), 60);
   }
@@ -403,7 +412,9 @@ export class BoxGen {
 
   #onGenerated(msg) {
     this.busy = false;
-    if (msg.error) {
+    if (!this.state.parts.length) {
+      // the components were cleared while this was generating
+    } else if (msg.error) {
       console.error(msg.error);
       this.#setStatus('⚠ Could not generate this shape - try a different size.');
     } else {
@@ -497,6 +508,7 @@ export class BoxGen {
 
   // Bring Base + Lid into the Design workspace as bodies (to modify with the Fusion tools).
   sendToDesign() {
+    if (!this.baseMesh.geometry.attributes.position?.count) { toast('Nothing to send yet - tick some components first.', 'warn'); return; }
     const app = this.app;
     const t = this.state.wall;
     const look = (hex) => ({ color: hex });
