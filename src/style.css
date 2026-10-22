@@ -117,6 +117,8 @@ body, #topbar, #ribbon, .panel, #viewport, #timeline, .dialog, .dd-menu { transi
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+/* headings take the theme text colour (beats browser / host page defaults) */
+body :is(h1, h2, h3, h4, h5, h6) { color: inherit; }
 button { font: inherit; color: inherit; cursor: pointer; }
 input, select { font: inherit; color: inherit; }
 .hidden { display: none !important; }
