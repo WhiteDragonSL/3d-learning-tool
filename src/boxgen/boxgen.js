@@ -27,6 +27,7 @@ export const defaultState = () => ({
   padding: 5, wall: 2, radius: 3, tolerance: 0.2, standoffHeight: 5, clearance: 0.5, lipHeight: 4,
   wiringGap: 10, headroom: 10, cableHole: 8,
   lid: 'screw', vents: true, lidVents: true,
+  emptyBox: false, // show the box at its set size before any component is ticked
   layoutManual: false, // true once parts were moved by hand
   parts: [], custom: [],
 });
@@ -54,7 +55,7 @@ export class BoxGen {
     this.redoStack = [];
     this.pending = null;
     this.selected = null;
-    this.view = { mode: 'assembled', components: true, xray: true, wire: false, labels: true };
+    this.view = { mode: 'assembled', shell: true, components: true, xray: true, wire: false, labels: true };
     this.search = '';
     this.warnings = [];
     this.status = '';
@@ -382,8 +383,8 @@ export class BoxGen {
     this.#refreshPartLooks();
     this.#renderWarnings();
     clearTimeout(this.rebuildTimer);
-    // no components ticked: show no enclosure
-    if (!this.state.parts.length) {
+    // no components ticked: show no enclosure (unless the empty box is switched on)
+    if (!this.#hasShell()) {
       for (const m of [this.baseMesh, this.lidMesh]) {
         m.geometry.dispose(); m.geometry = new THREE.BufferGeometry();
         m.children[0].geometry.dispose(); m.children[0].geometry = new THREE.BufferGeometry();
@@ -394,6 +395,8 @@ export class BoxGen {
     this.#setStatus('Generating…');
     if (now) this.#request(); else this.rebuildTimer = setTimeout(() => this.#request(), 60);
   }
+
+  #hasShell() { return this.state.parts.length > 0 || this.state.emptyBox; }
 
   #request() {
     if (!this.worker) {
@@ -412,7 +415,7 @@ export class BoxGen {
 
   #onGenerated(msg) {
     this.busy = false;
-    if (!this.state.parts.length) {
+    if (!this.#hasShell()) {
       // the components were cleared while this was generating
     } else if (msg.error) {
       console.error(msg.error);
@@ -465,8 +468,8 @@ export class BoxGen {
   #applyView() {
     const v = this.view, H = this.state.inner.height;
     const showBase = v.mode !== 'lid', showLid = v.mode !== 'base';
-    this.baseMesh.visible = showBase;
-    this.lidMesh.visible = showLid;
+    this.baseMesh.visible = v.shell && showBase;
+    this.lidMesh.visible = v.shell && showLid;
     this.lidMesh.position.set(0, v.mode === 'exploded' ? Math.max(25, H * 0.8) : 0, 0);
     this.partsGroup.visible = v.components && v.mode !== 'lid';
     for (const m of [this.baseMesh, this.lidMesh]) {
@@ -482,6 +485,7 @@ export class BoxGen {
   fit() {
     const box = new THREE.Box3();
     for (const m of [this.baseMesh, this.lidMesh]) if (m.visible && m.geometry.attributes.position) box.expandByObject(m);
+    if (box.isEmpty() && this.partsGroup.visible && this.state.parts.length) box.expandByObject(this.partsGroup);
     if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(80, 40, 60));
     this.vp.fit(box);
   }
@@ -781,7 +785,7 @@ export class BoxGen {
     const tog = (key, label, title) => `<button class="bg-tog ${v[key] ? 'on' : ''}" data-tog="${key}" title="${title}">${label}</button>`;
     this.viewbar.innerHTML = `
       <div class="bg-segs">${seg('assembled', 'Assembled')}${seg('exploded', 'Exploded')}${seg('base', 'Base only')}${seg('lid', 'Lid only')}</div>
-      <div class="bg-togs">${tog('components', 'Components', 'Show / hide the components')}${tog('xray', 'X-Ray', 'See-through enclosure')}${tog('wire', 'Wireframe', 'Wireframe enclosure')}${tog('labels', 'Labels', 'Component names')}</div>`;
+      <div class="bg-togs">${tog('shell', 'Shell', 'Show / hide the enclosure (base and lid)')}${tog('components', 'Components', 'Show / hide the components')}${tog('xray', 'X-Ray', 'See-through enclosure')}${tog('wire', 'Wireframe', 'Wireframe enclosure')}${tog('labels', 'Labels', 'Component names')}</div>`;
     this.viewbar.querySelectorAll('[data-mode]').forEach((b) => { b.onclick = () => { this.setView('mode', b.dataset.mode); setTimeout(() => this.fit(), 30); }; });
     this.viewbar.querySelectorAll('[data-tog]').forEach((b) => { b.onclick = () => this.setView(b.dataset.tog, !this.view[b.dataset.tog]); });
   }
@@ -894,6 +898,7 @@ export class BoxGen {
           <div class="bg-fit">
             <button class="btn small" data-a="autofit" title="Smallest box around the components where they are now">${icon('fit')} Auto-Fit</button>
           </div>
+          <div class="bg-switches"><label class="bg-switch"><input type="checkbox" data-k="emptyBox" ${s.emptyBox ? 'checked' : ''}><span></span>Show the box before components are ticked</label></div>
           <div class="stat"><span>Outside size</span><b data-out="outer">${r1(i.width + 2 * t)} × ${r1(i.depth + 2 * t)} × ${r1(i.height + 2 * t)} mm</b></div>
         </div>
         <div class="props-section">
@@ -942,6 +947,7 @@ export class BoxGen {
       n.onchange = () => { const v = parseFloat(n.value); if (Number.isFinite(v)) this.setParam(n.dataset.k, Math.max(+n.min || 0, v)); };
     });
     P.querySelector('[data-k=vents]').onchange = (e) => this.setParam('vents', e.target.checked);
+    P.querySelector('[data-k=emptyBox]').onchange = (e) => this.setParam('emptyBox', e.target.checked);
     P.querySelector('[data-k=lidVents]').onchange = (e) => this.setParam('lidVents', e.target.checked);
     P.querySelector('[data-k=cable]').onchange = (e) => this.setParam('cableHole', e.target.checked ? 8 : 0);
     P.querySelector('[data-k=lidScrew]').onchange = (e) => this.setParam('lid', e.target.checked ? 'screw' : 'friction');
