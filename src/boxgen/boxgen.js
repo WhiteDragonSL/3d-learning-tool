@@ -936,7 +936,7 @@ export class BoxGen {
           <div class="bg-switches">
             <label class="bg-switch"><input type="checkbox" data-k="vents" ${s.vents ? 'checked' : ''}><span></span>Vent slots in the side walls</label>
             <label class="bg-switch"><input type="checkbox" data-k="lidVents" ${s.lidVents ? 'checked' : ''}><span></span>Vent slots in the lid</label>
-            <label class="bg-switch"><input type="checkbox" data-k="cable" ${s.cableHole > 0 ? 'checked' : ''}><span></span>Cable entry hole (Ø8, left wall)</label>
+            <label class="bg-switch"><input type="checkbox" data-k="cable" ${s.cableHole > 0 ? 'checked' : ''}><span></span>Cable entry hole (Ø8, low on a wall)</label>
           </div>
           <div class="props-row-label">${s.layoutManual ? 'Layout: moved by hand (spacing applies when you re-generate)' : 'Layout: automatic - parts with ports face the walls'}</div>
         </div>
