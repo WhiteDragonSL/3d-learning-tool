@@ -125,6 +125,36 @@ export function cutoutPlacements(s) {
   return out;
 }
 
+// Port openings in the walls as [wall, from, to] (position along the wall), so vent
+// slots and the cable hole can keep clear of them.
+function portZones(s, margin) {
+  const out = [];
+  for (const p of cutoutPlacements(s)) {
+    if (!p.cut || p.wall === 'lid') continue;
+    const w = p.cutout.width / 2 + s.clearance + margin, at = p.n[0] ? p.z : p.x;
+    out.push([p.wall, at - w, at + w]);
+  }
+  return out;
+}
+
+// Where the cable entry hole goes: low on the left wall, slid along it (or moved to
+// another wall) until it is clear of every port opening; null if nothing is free.
+export function cableHolePlace(s) {
+  if (!(s.cableHole > 0)) return null;
+  const { width: W, depth: D, height: H } = s.inner;
+  const r = s.cableHole / 2, zones = portZones(s, 2);
+  const corner = (s.lid === 'screw' ? 2 * PILLAR_R + 1 : 2) + r;
+  for (const wall of ['left', 'right', 'back', 'front']) {
+    const lim = (wall === 'left' || wall === 'right' ? D : W) / 2 - corner;
+    for (let k = 0; k <= lim; k += 1) {
+      for (const at of k ? [-k, k] : [0]) {
+        if (!zones.some(([w, a, b]) => w === wall && at + r > a && at - r < b)) return { wall, n: SIDES[wall], at, y: Math.min(r + 3, H / 2), r };
+      }
+    }
+  }
+  return null;
+}
+
 // ---------- base ----------
 export function buildBase(s) {
   const { width: W, depth: D, height: H } = s.inner;
@@ -167,8 +197,11 @@ export function buildBase(s) {
       cuts.push(box(nx ? L : wt, ht, nz ? L : wt, cx, p.y, cz));
     }
   }
-  // ventilation slots in the left and right walls
+  // ventilation slots in the left and right walls, kept clear of ports and the cable hole
+  const cable = cableHolePlace(s);
   if (s.vents) {
+    const zones = portZones(s, 1.5);
+    if (cable) zones.push([cable.wall, cable.at - cable.r - 2, cable.at + cable.r + 2]);
     const lip = lipHeight(s);
     const vh = Math.min(25, (H - lip) * 0.55);
     if (vh >= 3) {
@@ -176,17 +209,17 @@ export function buildBase(s) {
       for (let i = 0; i < n; i++) {
         const z = (i - (n - 1) / 2) * 4.5;
         for (const side of [-1, 1]) {
-          if (side < 0 && s.cableHole > 0 && Math.abs(z) < s.cableHole / 2 + 3) continue; // keep clear of the cable hole
+          if (zones.some(([w, a, b]) => w === (side < 0 ? 'left' : 'right') && z + 1 > a && z - 1 < b)) continue;
           cuts.push(box(t + 3, vh, 2, side * (W / 2 + t / 2), (H - lip) / 2, z));
         }
       }
     }
   }
-  // cable entry hole in the left wall, low down
-  if (s.cableHole > 0) {
-    const r = s.cableHole / 2, g = new THREE.CylinderGeometry(r, r, t + 3, 32);
-    g.rotateZ(Math.PI / 2);
-    g.translate(-(W / 2 + t / 2), Math.min(r + 3, H / 2), 0);
+  // cable entry hole in a side wall, low down
+  if (cable) {
+    const [nx, nz] = cable.n, g = new THREE.CylinderGeometry(cable.r, cable.r, t + 3, 32);
+    if (nx) g.rotateZ(Math.PI / 2); else g.rotateX(Math.PI / 2);
+    g.translate(nx ? nx * (W / 2 + t / 2) : cable.at, cable.y, nz ? nz * (D / 2 + t / 2) : cable.at);
     cuts.push(clean(g));
   }
   if (adds.length) base = csg(base, merge(adds), ADDITION);
