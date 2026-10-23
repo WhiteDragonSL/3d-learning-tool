@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CATEGORIES, LIBRARY, categoryOf, customComponent } from './library.js';
 import {
   buildBase, buildLid, printReady, footprint, rotXZ, cutoutPlacements, pillarCenters, lipHeight, PILLAR_RADIUS,
@@ -27,6 +28,8 @@ export const defaultState = () => ({
   padding: 5, wall: 2, radius: 3, tolerance: 0.2, standoffHeight: 5, clearance: 0.5, lipHeight: 4,
   wiringGap: 10, headroom: 10, cableHole: 8,
   lid: 'screw', vents: true, lidVents: true,
+  shell: true, // false: no base / lid, the components alone are the model
+  emptyBox: false, // show the box at its set size before any component is ticked
   layoutManual: false, // true once parts were moved by hand
   parts: [], custom: [],
 });
@@ -382,9 +385,20 @@ export class BoxGen {
     this.#refreshPartLooks();
     this.#renderWarnings();
     clearTimeout(this.rebuildTimer);
+    // case switched off, or no components ticked: show no enclosure (unless the empty box is switched on)
+    if (!this.#hasShell()) {
+      for (const m of [this.baseMesh, this.lidMesh]) {
+        m.geometry.dispose(); m.geometry = new THREE.BufferGeometry();
+        m.children[0].geometry.dispose(); m.children[0].geometry = new THREE.BufferGeometry();
+      }
+      this.#setStatus(this.state.shell ? 'Tick components to generate an enclosure.' : 'Case off - only the components are shown and exported.');
+      return;
+    }
     this.#setStatus('Generating…');
     if (now) this.#request(); else this.rebuildTimer = setTimeout(() => this.#request(), 60);
   }
+
+  #hasShell() { return this.state.shell && (this.state.parts.length > 0 || this.state.emptyBox); }
 
   #request() {
     if (!this.worker) {
@@ -403,7 +417,9 @@ export class BoxGen {
 
   #onGenerated(msg) {
     this.busy = false;
-    if (msg.error) {
+    if (!this.#hasShell()) {
+      // the components were cleared while this was generating
+    } else if (msg.error) {
       console.error(msg.error);
       this.#setStatus('⚠ Could not generate this shape - try a different size.');
     } else {
@@ -445,6 +461,13 @@ export class BoxGen {
     e.geometry = featureEdges(geo, 30);
   }
 
+  // the case (base + lid) on or off
+  setShell(on) {
+    this.setParam('shell', on);
+    this.#renderViewbar();
+    setTimeout(() => this.fit(), 30);
+  }
+
   setView(key, value) {
     this.view[key] = value;
     this.#applyView();
@@ -471,6 +494,7 @@ export class BoxGen {
   fit() {
     const box = new THREE.Box3();
     for (const m of [this.baseMesh, this.lidMesh]) if (m.visible && m.geometry.attributes.position) box.expandByObject(m);
+    if (box.isEmpty() && this.partsGroup.visible && this.state.parts.length) box.expandByObject(this.partsGroup);
     if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(80, 40, 60));
     this.vp.fit(box);
   }
@@ -495,8 +519,51 @@ export class BoxGen {
     bus.emit('boxgen:export', { kind });
   }
 
+  // All components merged into one model, sitting on the floor (y = 0) like they do in the case.
+  #componentsGeometry() {
+    if (!this.state.parts.length) return null;
+    this.partsGroup.updateMatrixWorld(true);
+    const inv = this.partsGroup.matrixWorld.clone().invert(), list = [];
+    this.partsGroup.traverse((m) => {
+      if (!m.isMesh) return;
+      let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      for (const n of Object.keys(g.attributes)) if (n !== 'position' && n !== 'normal') g.deleteAttribute(n);
+      list.push(g.applyMatrix4(inv.clone().multiply(m.matrixWorld)));
+    });
+    return list.length ? mergeGeometries(list) : null;
+  }
+
+  exportComponents() {
+    const geo = this.#componentsGeometry();
+    if (!geo) { toast('Tick some components first.', 'warn'); return; }
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(printReady(geo, 'base').rotateX(Math.PI / 2)));
+    const data = new STLExporter().parse(scene, { binary: true });
+    const name = `${(this.state.name || 'enclosure').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'enclosure'}-components.stl`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data], { type: 'model/stl' }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast(`Exported ${name} (all components as one model).`, 'ok');
+    bus.emit('boxgen:export', { kind: 'components' });
+  }
+
   // Bring Base + Lid into the Design workspace as bodies (to modify with the Fusion tools).
   sendToDesign() {
+    if (!this.state.shell) {
+      // case off: the components go across as one body
+      const geo = this.#componentsGeometry();
+      if (!geo) { toast('Nothing to send yet - tick some components first.', 'warn'); return; }
+      this.app.setWorkspace('design');
+      const body = this.app.doc.add(meshBody(geo, `${this.state.name} Components`, { color: '#8fb3e8' }));
+      this.app.doc.commit(`Import ${this.state.name}`, 'insert');
+      this.app.select([body]);
+      this.app.fitAll();
+      toast('Components added to the Design workspace as one body.', 'ok', 3000);
+      return;
+    }
+    if (!this.baseMesh.geometry.attributes.position?.count) { toast('Nothing to send yet - tick some components first.', 'warn'); return; }
     const app = this.app;
     const t = this.state.wall;
     const look = (hex) => ({ color: hex });
@@ -769,8 +836,9 @@ export class BoxGen {
     const tog = (key, label, title) => `<button class="bg-tog ${v[key] ? 'on' : ''}" data-tog="${key}" title="${title}">${label}</button>`;
     this.viewbar.innerHTML = `
       <div class="bg-segs">${seg('assembled', 'Assembled')}${seg('exploded', 'Exploded')}${seg('base', 'Base only')}${seg('lid', 'Lid only')}</div>
-      <div class="bg-togs">${tog('components', 'Components', 'Show / hide the components')}${tog('xray', 'X-Ray', 'See-through enclosure')}${tog('wire', 'Wireframe', 'Wireframe enclosure')}${tog('labels', 'Labels', 'Component names')}</div>`;
+      <div class="bg-togs"><button class="bg-tog ${this.state.shell ? 'on' : ''}" data-shell title="Case on / off: off leaves just the components as one model">Shell</button>${tog('components', 'Components', 'Show / hide the components')}${tog('xray', 'X-Ray', 'See-through enclosure')}${tog('wire', 'Wireframe', 'Wireframe enclosure')}${tog('labels', 'Labels', 'Component names')}</div>`;
     this.viewbar.querySelectorAll('[data-mode]').forEach((b) => { b.onclick = () => { this.setView('mode', b.dataset.mode); setTimeout(() => this.fit(), 30); }; });
+    this.viewbar.querySelector('[data-shell]').onclick = () => this.setShell(!this.state.shell);
     this.viewbar.querySelectorAll('[data-tog]').forEach((b) => { b.onclick = () => this.setView(b.dataset.tog, !this.view[b.dataset.tog]); });
   }
 
@@ -882,10 +950,12 @@ export class BoxGen {
           <div class="bg-fit">
             <button class="btn small" data-a="autofit" title="Smallest box around the components where they are now">${icon('fit')} Auto-Fit</button>
           </div>
+          <div class="bg-switches"><label class="bg-switch"><input type="checkbox" data-k="emptyBox" ${s.emptyBox ? 'checked' : ''}><span></span>Show the box before components are ticked</label></div>
           <div class="stat"><span>Outside size</span><b data-out="outer">${r1(i.width + 2 * t)} × ${r1(i.depth + 2 * t)} × ${r1(i.height + 2 * t)} mm</b></div>
         </div>
         <div class="props-section">
           <h4>SHELL</h4>
+          <div class="bg-switches" style="margin:0 0 10px"><label class="bg-switch"><input type="checkbox" data-k="shell" ${s.shell ? 'checked' : ''}><span></span>Case (base + lid) - off leaves just the components</label></div>
           ${slider('wall', 'Wall thickness', 1.5, 5, 0.1)}
           ${slider('radius', 'Corner radius', 0, 15, 0.5)}
           ${slider('tolerance', 'Lid lip tolerance', 0, 1, 0.05)}
@@ -914,8 +984,9 @@ export class BoxGen {
         <div class="props-section"><h4>CHECKS</h4><div class="bg-warnings"></div></div>
         <div class="props-section bg-export">
           <h4>EXPORT</h4>
-          <button class="btn primary" data-a="exp-base">${icon('export')} Export Base (.STL)</button>
-          <button class="btn primary" data-a="exp-lid">${icon('export')} Export Lid (.STL)</button>
+          ${s.shell ? `<button class="btn primary" data-a="exp-base">${icon('export')} Export Base (.STL)</button>
+          <button class="btn primary" data-a="exp-lid">${icon('export')} Export Lid (.STL)</button>`
+            : `<button class="btn primary" data-a="exp-parts">${icon('export')} Export components (.STL)</button>`}
           <button class="btn" data-a="design">${icon('insert')} Edit in Design workspace</button>
           <div class="bg-status" data-out="status">${esc(this.status)}</div>
         </div>
@@ -930,6 +1001,8 @@ export class BoxGen {
       n.onchange = () => { const v = parseFloat(n.value); if (Number.isFinite(v)) this.setParam(n.dataset.k, Math.max(+n.min || 0, v)); };
     });
     P.querySelector('[data-k=vents]').onchange = (e) => this.setParam('vents', e.target.checked);
+    P.querySelector('[data-k=shell]').onchange = (e) => this.setShell(e.target.checked);
+    P.querySelector('[data-k=emptyBox]').onchange = (e) => this.setParam('emptyBox', e.target.checked);
     P.querySelector('[data-k=lidVents]').onchange = (e) => this.setParam('lidVents', e.target.checked);
     P.querySelector('[data-k=cable]').onchange = (e) => this.setParam('cableHole', e.target.checked ? 8 : 0);
     P.querySelector('[data-k=lidScrew]').onchange = (e) => this.setParam('lid', e.target.checked ? 'screw' : 'friction');
@@ -943,6 +1016,7 @@ export class BoxGen {
     act('del', () => this.removeSelected());
     act('exp-base', () => this.exportSTL('base'));
     act('exp-lid', () => this.exportSTL('lid'));
+    act('exp-parts', () => this.exportComponents());
     act('design', () => this.sendToDesign());
     act('clear', () => { if (this.state.parts.length && confirm('Remove all components from the enclosure?')) this.change(() => { this.state.parts = []; this.selected = null; }); });
     this.#renderWarnings();
